@@ -1,0 +1,11 @@
+[package]
+name = "kafka_client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+futures-lite = "2.6.0"
+glommio = "0.9.0"
+kafka-protocol = { version = "0.14.1", features = ["messages_enums"] }
+bytes = "1.10.1"
+futures = "0.3.31"
