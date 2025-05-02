@@ -5,14 +5,14 @@ use std::{
     vec,
 };
 
-use bytes::{Buf, Bytes, buf};
+use bytes::{buf, Buf, Bytes, BytesMut};
 use futures::{AsyncReadExt, AsyncWriteExt, FutureExt, join, select};
-use futures_lite::io::split;
+use futures_lite::io::{split, Cursor};
 use glommio::{
-    dbg_context, enclose, executor, net::TcpStream, spawn_local, sync::{RwLock, Semaphore}, timer::{Timer, TimerActionOnce}, yield_if_needed, LocalExecutorBuilder
+    channels::local_channel, dbg_context, enclose, executor, net::TcpStream, spawn_local, sync::{RwLock, Semaphore}, timer::{Timer, TimerActionOnce}, yield_if_needed, LocalExecutorBuilder
 };
 use kafka_client::{
-    client::KafkaClient,
+    client::{KafkaClient},
     config::{Metadata, Producer},
 };
 use kafka_protocol::protocol::buf::ByteBuf;
@@ -20,6 +20,31 @@ use kafka_protocol::protocol::buf::ByteBuf;
 fn main() {
     LocalExecutorBuilder::default()
         .spawn(|| async move {
+            // let (s, r) = local_channel::new_bounded(1);
+            // s.send(1).await.unwrap();
+            // drop(s);
+            // Timer::new(Duration::from_millis(500));
+            // println!("{:?}", r.recv().await);
+            // println!("{:?}", r.recv().await);
+            // return ;
+            // let mut cursor: Cursor<[u8; 4]> = Cursor::new([0, 1, 2, 3]);
+            // let mut buf = BytesMut::zeroed(3);
+            // cursor.read_exact(&mut buf).await.unwrap();
+            // println!("{:?}", buf.as_ref());
+            // return ;
+            // let jh = spawn_local(async {
+            //     loop {
+            //         Timer::new(Duration::from_secs(1)).await;
+            //         println!("In loop");
+                    
+            //         yield_if_needed().await;
+            //     }
+            // });
+            // drop(jh);
+            // println!("After drop");
+            // // println!("{:?}", jh);
+            // Timer::new(Duration::from_secs(10)).await;
+            // return ;
             // let u = Rc::<RefCell<Option<TcpStream>>>::default();
             // let v = u.take();
             // return ;
@@ -39,13 +64,13 @@ fn main() {
                 .with_producer(Producer::default())
                 .with_hosts(vec!["localhost:9092".to_string()]);
             kafka_client.init().await.unwrap();
-            kafka_client
-                .request_api_versions("prokater".to_string(), "0.0.0".to_string())
-                .await;
+            // kafka_client.request_metadata().await;
+            kafka_client.request_produce().await;
+            kafka_client.produce_record().await;
             // let mut b = Bytes::new();
             // b.try_get_bytes(size)
             // let stream = TcpStream::connect("localhost:12345").await.unwrap();
-            // let stream = Rc::new(RwLock::new(stream));
+            // let stream = Rc::new(RwLoc`k::new(stream));
             // // enclose!()
             // let sem = Rc::new(Semaphore::new(1));
             // spawn_local(enclose!((mut stream, sem) async move {
