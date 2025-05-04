@@ -117,12 +117,6 @@ impl KafkaClient {
                             .unwrap();
                     })
                     .await;
-                    // sender_map.get(&topic).unwrap().get(&partition_index).unwrap()
-                    //     .into_iter()
-                    //     .enumerate()
-                    //     .for_each(|(i, sender)| {
-                    //         sender.send(Ok((partition_index, partition_produce_res.base_offset + i)).await.unwrap();
-                    //     });
                 }
             }
         } else {

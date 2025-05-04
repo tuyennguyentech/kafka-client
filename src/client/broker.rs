@@ -42,17 +42,6 @@ pub struct Broker {
     correlation_id_cnt: i32,
 }
 
-// impl Default for Broker {
-//     fn default() -> Self {
-//         Self {
-//             metadata: MetadataResponseBroker::default(),
-//             reader: Default::default(),
-//             writer: Default::default(),
-//             event_loop: Default::default(),
-//         }
-//     }
-// }
-
 pub mod experiment {
     use std::{
         cell::RefCell,
