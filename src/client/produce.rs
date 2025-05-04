@@ -1,8 +1,6 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
-    fs::ReadDir,
-    hash::Hash,
     rc::Rc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -11,7 +9,7 @@ use bytes::{Bytes, BytesMut};
 use futures::StreamExt;
 use futures_lite::stream;
 use glommio::{
-    channels::local_channel::{self, LocalReceiver, LocalSender},
+    channels::local_channel::{self, LocalSender},
     enclose,
     timer::TimerActionOnce,
 };
@@ -21,11 +19,11 @@ use kafka_protocol::{
         ApiKey, ProduceRequest, ProduceResponse, RequestHeader, ResponseHeader, TopicName,
         produce_request::{PartitionProduceData, TopicProduceData},
     },
-    protocol::{Decodable, HeaderVersion, Message, StrBytes, buf::ByteBufMut},
+    protocol::{Decodable, HeaderVersion, Message, StrBytes},
     records::{Compression, Record, RecordBatchEncoder, RecordEncodeOptions, TimestampType},
 };
 use murmur2::KAFKA_SEED;
-use rand::{random, rngs::mock};
+use rand::random;
 
 use crate::config::Producer;
 
@@ -100,11 +98,25 @@ impl KafkaClient {
                 let topic = topic_produce_res.name.to_string().clone();
                 for partition_produce_res in topic_produce_res.partition_responses {
                     let partition_index = partition_produce_res.index;
-                    stream::iter(sender_map.get(&topic).unwrap().get(&partition_index).unwrap()
-                    .into_iter()
-                    .enumerate()).for_each(|(i, sender)| async move {
-                        sender.send(Ok((partition_index, partition_produce_res.base_offset + i as i64))).await.unwrap();
-                    }).await;
+                    stream::iter(
+                        sender_map
+                            .get(&topic)
+                            .unwrap()
+                            .get(&partition_index)
+                            .unwrap()
+                            .into_iter()
+                            .enumerate(),
+                    )
+                    .for_each(|(i, sender)| async move {
+                        sender
+                            .send(Ok((
+                                partition_index,
+                                partition_produce_res.base_offset + i as i64,
+                            )))
+                            .await
+                            .unwrap();
+                    })
+                    .await;
                     // sender_map.get(&topic).unwrap().get(&partition_index).unwrap()
                     //     .into_iter()
                     //     .enumerate()

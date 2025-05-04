@@ -2,10 +2,8 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use bytes::{Buf, Bytes, BytesMut};
 use futures::AsyncReadExt;
-use futures_lite::{
-    AsyncWriteExt,
-    io::{ReadHalf, WriteHalf, split},
-};
+use futures_lite::AsyncWriteExt;
+use experiment::{ReadHalf, WriteHalf, split};
 use glommio::{
     channels::local_channel::{self, LocalSender},
     enclose,
@@ -54,6 +52,73 @@ pub struct Broker {
 //         }
 //     }
 // }
+
+pub mod experiment {
+    use std::{
+        cell::RefCell,
+        io::{IoSliceMut, Result},
+        pin::Pin,
+        rc::Rc,
+        task::{Context, Poll},
+    };
+
+    use futures_io::{AsyncRead, AsyncWrite};
+
+    pub fn split<T>(stream: T) -> (ReadHalf<T>, WriteHalf<T>)
+    where
+        T: AsyncRead + AsyncWrite + Unpin,
+    {
+        let inner = Rc::new(RefCell::new(stream));
+        (ReadHalf(inner.clone()), WriteHalf(inner))
+    }
+
+    #[derive(Debug)]
+    pub struct ReadHalf<T>(Rc<RefCell<T>>);
+
+    #[derive(Debug)]
+    pub struct WriteHalf<T>(Rc<RefCell<T>>);
+
+    impl<T: AsyncRead + Unpin> AsyncRead for ReadHalf<T> {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut [u8],
+        ) -> Poll<Result<usize>> {
+            let mut inner = self.0.borrow_mut();
+            Pin::new(&mut *inner).poll_read(cx, buf)
+        }
+
+        fn poll_read_vectored(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            bufs: &mut [IoSliceMut<'_>],
+        ) -> Poll<Result<usize>> {
+            let mut inner = self.0.borrow_mut();
+            Pin::new(&mut *inner).poll_read_vectored(cx, bufs)
+        }
+    }
+
+    impl<T: AsyncWrite + Unpin> AsyncWrite for WriteHalf<T> {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<Result<usize>> {
+            let mut inner = self.0.borrow_mut();
+            Pin::new(&mut *inner).poll_write(cx, buf)
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+            let mut inner = self.0.borrow_mut();
+            Pin::new(&mut *inner).poll_flush(cx)
+        }
+
+        fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+            let mut inner = self.0.borrow_mut();
+            Pin::new(&mut *inner).poll_close(cx)
+        }
+    }
+}
 
 impl Broker {
     pub fn with_broker_type(mut self, broker_type: BrokerType) -> Self {

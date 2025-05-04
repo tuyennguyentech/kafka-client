@@ -13,20 +13,14 @@ use futures_lite::{
     stream,
 };
 use glommio::{
-    LocalExecutorBuilder,
-    channels::local_channel,
-    dbg_context, enclose, executor,
-    net::TcpStream,
+    LocalExecutorBuilder, enclose,
     spawn_local,
-    sync::{RwLock, Semaphore},
-    timer::{Timer, TimerActionOnce},
-    yield_if_needed,
+    timer::Timer,
 };
 use kafka_client::{
     client::KafkaClient,
     config::{Metadata, Producer},
 };
-use kafka_protocol::protocol::buf::ByteBuf;
 
 fn main() {
     LocalExecutorBuilder::default()
@@ -79,7 +73,7 @@ fn main() {
             //     .unwrap();
             // handle.join().unwrap();
             // return;
-            let mut kafka_client = Rc::new(RefCell::new(
+            let kafka_client = Rc::new(RefCell::new(
                 KafkaClient::default()
                     .with_metadata(
                         Metadata::default().with_refresh_frequency(Duration::from_secs(10)),
@@ -88,6 +82,7 @@ fn main() {
                     .with_hosts(vec!["localhost:9092".to_string()]),
             ));
             kafka_client.borrow_mut().init().await.unwrap();
+            println!("{:?}", kafka_client.borrow().get_brokers_ref());
             // kafka_client.request_metadata().await;
             let mut messages = vec![
                 (
