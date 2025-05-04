@@ -10,6 +10,6 @@ Kafka Client is a crate provide a client which can communicate with Kafka Cluste
 - Metadata
 - ApiVersions
 
-## Todo
+## TODO list
 
 - Test the throughput of producing record concurrently.

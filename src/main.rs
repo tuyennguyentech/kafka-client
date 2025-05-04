@@ -89,7 +89,7 @@ fn main() {
             ));
             kafka_client.borrow_mut().init().await.unwrap();
             // kafka_client.request_metadata().await;
-            let messages = vec![
+            let mut messages = vec![
                 (
                     "tmp".to_string(),
                     Some("0".to_string()),
@@ -105,6 +105,9 @@ fn main() {
                 ("test".to_string(), None, Some("1".to_string())),
                 ("test".to_string(), Some("2".to_string()), None),
             ];
+            for _ in 0..3 {
+                messages.extend_from_within(0..messages.len());
+            }
             stream::iter(messages.into_iter())
                 .for_each(|(topic, key, value)| {
                     spawn_local(enclose!((kafka_client => kafka_client) async move {
