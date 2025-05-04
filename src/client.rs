@@ -1,48 +1,106 @@
+pub mod api_versions;
 pub mod broker;
-pub mod producer;
+pub mod metadata;
+pub mod produce;
 
-use std::{cell::RefCell, collections::HashMap, time::Duration};
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    collections::HashMap,
+    rc::Rc,
+    time::Duration,
+};
 
 use broker::{Broker, BrokerType};
 use bytes::{BufMut as _, Bytes, BytesMut};
+use glommio::{channels::local_channel::LocalSender, timer::TimerActionOnce};
 use kafka_protocol::{
     messages::{
-        ApiKey, ApiVersionsRequest, ApiVersionsResponse, MetadataRequest, MetadataResponse,
-        RequestHeader, ResponseHeader,
+        ApiVersionsRequest, ApiVersionsResponse, RequestHeader,
         api_versions_response::ApiVersion,
         metadata_response::{MetadataResponseBroker, MetadataResponseTopic},
     },
-    protocol::{Decodable, Encodable, HeaderVersion as _, Message, StrBytes},
+    protocol::{Encodable, HeaderVersion as _, StrBytes},
+    records::Record,
 };
 
 use crate::config::{Metadata, Producer};
+
+type ProduceResult = Result<(i32, i64), Option<i16>>;
+type RecordQueue = HashMap<i32, HashMap<String, HashMap<i32, Vec<(Record, Rc<LocalSender<ProduceResult>>)>>>>;
 
 #[derive(Default, Debug)]
 pub struct KafkaClient {
     pub metadata: Metadata,
     pub producer: Producer,
     hosts: Vec<String>,
-    // reader: Option<Rc<RwLock<ReadHalf<TcpStream<Preallocated>>>>>,
-    // writer: Option<Rc<RwLock<WriteHalf<TcpStream<Preallocated>>>>>,
-    // inner_task: Option<JoinHandle<()>>,
-    state: Option<RefCell<State>>,
-    // map: Rc<RefCell<HashMap<i32, LocalSender<Bytes>>>>,
-    api_versions: RefCell<Option<ApiVersionsResponse>>,
-    api_versions_map: RefCell<Option<HashMap<i16, ApiVersion>>>,
+    state: State,
     bootstrap_broker: Option<Broker>,
-    // produce_loop: RefCell<Option<JoinHandle<()>>>,
+    brokers: Rc<RefCell<HashMap<i32, Broker>>>,
+    records_queue_size: Rc<RefCell<i32>>,
+    records_queue:
+        Rc<RefCell<RecordQueue>>,
+    produce_event_loop: RefCell<Option<TimerActionOnce<()>>>,
 }
 
 #[derive(Debug, Default)]
 struct State {
     // counter: i32,
-    brokers: HashMap<i32, MetadataResponseBroker>,
-    topics: HashMap<StrBytes, MetadataResponseTopic>,
+    api_versions: Option<ApiVersionsResponse>,
+    api_versions_map: Option<HashMap<i16, ApiVersion>>,
+    brokers: Option<HashMap<i32, MetadataResponseBroker>>,
+    topics: Option<HashMap<StrBytes, MetadataResponseTopic>>,
 }
 
 static TIMEOUT: Duration = Duration::from_secs(5);
 
 impl KafkaClient {
+    fn get_produce_event_loop_ref(&self) -> Ref<'_, Option<TimerActionOnce<()>>> {
+        self.produce_event_loop.borrow()
+    }
+    fn get_produce_event_loop_mut(&self) -> RefMut<'_, Option<TimerActionOnce<()>>> {
+        self.produce_event_loop.borrow_mut()
+    }
+    fn get_state_ref(&self) -> &State {
+        &self.state
+    }
+    fn get_state_mut(&mut self) -> &mut State {
+        &mut self.state
+    }
+    fn get_records_queue_size(&self) -> Rc<RefCell<i32>> {
+        self.records_queue_size.clone()
+    }
+    fn get_records_queue_size_ref(&self) -> Ref<'_, i32> {
+        self.records_queue_size.borrow()
+    }
+    fn get_records_queue_size_mut(&self) -> RefMut<'_, i32> {
+        self.records_queue_size.borrow_mut()
+    }
+    fn get_records_queue(
+        &self,
+    ) -> Rc<RefCell<RecordQueue>>
+    {
+        self.records_queue.clone()
+    }
+    fn get_records_queue_ref(
+        &self,
+    ) -> Ref<'_, RecordQueue> {
+        self.records_queue.borrow()
+    }
+    fn get_records_queue_mut(
+        &self,
+    ) -> RefMut<'_, RecordQueue>
+    {
+        self.records_queue.borrow_mut()
+    }
+    fn get_brokers(&self) -> Rc<RefCell<HashMap<i32, Broker>>> {
+        self.brokers.clone()
+    }
+    fn get_brokers_ref(&self) -> Ref<'_, HashMap<i32, Broker>> {
+        self.brokers.borrow()
+    }
+    fn get_brokers_mut(&self) -> RefMut<'_, HashMap<i32, Broker>> {
+        self.brokers.borrow_mut()
+    }
     pub fn with_metadata(mut self, metadata: Metadata) -> Self {
         self.metadata = metadata;
         self
@@ -118,7 +176,7 @@ impl KafkaClient {
         //         }
         //     }),
         // ).detach());
-        self.state.replace(RefCell::new(State::default()));
+        // self.state.replace(State::default());
         self.request_api_versions("kafka-client".to_string(), "0.0.1".to_string())
             .await;
         self.request_metadata().await;
@@ -144,7 +202,11 @@ impl KafkaClient {
     //         .unwrap()
     // }
     async fn request<T: Encodable>(&mut self, header: RequestHeader, body: T) -> Option<Bytes> {
-        self.bootstrap_broker.as_mut().unwrap().request(header, body).await
+        self.bootstrap_broker
+            .as_mut()
+            .unwrap()
+            .request(header, body)
+            .await
         // let correlation_id = self.get_next_correlation_id();
         // let header = header.with_correlation_id(correlation_id);
         // let buf = Self::encode(header, body);
@@ -165,85 +227,16 @@ impl KafkaClient {
         // }
         // res
     }
-    pub async fn request_api_versions(
+    async fn request_broker<T: Encodable>(
         &mut self,
-        client_software_name: String,
-        client_software_version: String,
-    ) {
-        let header = RequestHeader::default()
-            .with_request_api_key(ApiKey::ApiVersions as _)
-            .with_request_api_version(ApiVersion::VERSIONS.max)
-            .with_client_id(None);
-        let body = ApiVersionsRequest::default()
-            .with_client_software_name(StrBytes::from_string(client_software_name))
-            .with_client_software_version(StrBytes::from_string(client_software_version));
-        let res = self.request(header, body).await;
-        if let Some(mut buf) = res {
-            // println!("size = {}\n{:?}", buf.len(), buf);
-            let _header = ResponseHeader::decode(
-                &mut buf,
-                ApiVersionsResponse::header_version(ApiVersionsResponse::VERSIONS.max),
-            )
-            .unwrap();
-            // println!("{:?}", header);
-            let body =
-                ApiVersionsResponse::decode(&mut buf, ApiVersionsRequest::VERSIONS.max).unwrap();
-            // println!("{:#?}\n{:#?}", header, body);
-            self.api_versions_map.borrow_mut().replace(
-                body.api_keys
-                    .iter()
-                    .map(|x| (x.api_key, x.clone()))
-                    .collect(),
-            );
-            println!("{:?}\n{:?}", _header, body);
-            self.api_versions.borrow_mut().replace(body);
-        } else {
-            panic!("Cannot fetch api versions of cluster");
-        }
-    }
-    fn get_api_version(&self, api_key: i16) -> ApiVersion {
-        self.api_versions_map
-            .borrow()
-            .as_ref()
+        node_id: i32,
+        header: RequestHeader,
+        body: T,
+    ) -> Option<Bytes> {
+        self.get_brokers_mut()
+            .get_mut(&node_id)
             .unwrap()
-            .get(&api_key)
-            .unwrap()
-            .clone()
-    }
-    pub async fn request_metadata(&mut self) {
-        let api_key = ApiKey::Metadata as _;
-        let api_version = self.get_api_version(api_key);
-        let header = RequestHeader::default()
-            .with_request_api_key(api_key)
-            .with_request_api_version(api_version.max_version)
-            .with_client_id(None);
-        let body = MetadataRequest::default()
-            .with_topics(None)
-            .with_allow_auto_topic_creation(true);
-        println!("{:?}", api_version);
-        // body.encode(buf, version)
-        let res = self.request(header, body).await;
-        if let Some(mut res) = res {
-            let _header = ResponseHeader::decode(
-                &mut res,
-                MetadataResponse::header_version(api_version.max_version),
-            )
-            .unwrap();
-            let body = MetadataResponse::decode(&mut res, api_version.max_version).unwrap();
-            println!("{:?}\n{:?}", _header, body);
-            self.state.as_ref().unwrap().borrow_mut().brokers = body
-                .brokers
-                .into_iter()
-                .map(|broker| (i32::from(broker.node_id), broker))
-                .collect();
-            self.state.as_ref().unwrap().borrow_mut().topics = body
-                .topics
-                .into_iter()
-                .map(|topic| (StrBytes::from(topic.name.clone().unwrap()), topic))
-                .collect();
-            // println!("{:#?}\n{:#?}", body.brokers, body.topics);
-        } else {
-            panic!("Cannot fetch metadata of cluster");
-        }
+            .request(header, body)
+            .await
     }
 }

@@ -5,14 +5,25 @@ use std::{
     vec,
 };
 
-use bytes::{buf, Buf, Bytes, BytesMut};
+use bytes::{Buf, Bytes, BytesMut, buf};
 use futures::{AsyncReadExt, AsyncWriteExt, FutureExt, join, select};
-use futures_lite::io::{split, Cursor};
+use futures_lite::{
+    StreamExt,
+    io::{Cursor, split},
+    stream,
+};
 use glommio::{
-    channels::local_channel, dbg_context, enclose, executor, net::TcpStream, spawn_local, sync::{RwLock, Semaphore}, timer::{Timer, TimerActionOnce}, yield_if_needed, LocalExecutorBuilder
+    LocalExecutorBuilder,
+    channels::local_channel,
+    dbg_context, enclose, executor,
+    net::TcpStream,
+    spawn_local,
+    sync::{RwLock, Semaphore},
+    timer::{Timer, TimerActionOnce},
+    yield_if_needed,
 };
 use kafka_client::{
-    client::{KafkaClient},
+    client::KafkaClient,
     config::{Metadata, Producer},
 };
 use kafka_protocol::protocol::buf::ByteBuf;
@@ -20,6 +31,15 @@ use kafka_protocol::protocol::buf::ByteBuf;
 fn main() {
     LocalExecutorBuilder::default()
         .spawn(|| async move {
+            // let (s, r) = local_channel::new_bounded(1);
+            // let timer = TimerActionOnce::do_in(Duration::from_secs(1), async move {
+            //     println!("timer");
+            //     s.send(true).await.unwrap();
+            // });
+            // r.recv().await.unwrap();
+            // println!("after schedule");
+            // Timer::new(Duration::from_secs(2)).await;
+            // return ;
             // let (s, r) = local_channel::new_bounded(1);
             // s.send(1).await.unwrap();
             // drop(s);
@@ -36,7 +56,7 @@ fn main() {
             //     loop {
             //         Timer::new(Duration::from_secs(1)).await;
             //         println!("In loop");
-                    
+
             //         yield_if_needed().await;
             //     }
             // });
@@ -59,14 +79,43 @@ fn main() {
             //     .unwrap();
             // handle.join().unwrap();
             // return;
-            let mut kafka_client = KafkaClient::default()
-                .with_metadata(Metadata::default().with_refresh_frequency(Duration::from_secs(10)))
-                .with_producer(Producer::default())
-                .with_hosts(vec!["localhost:9092".to_string()]);
-            kafka_client.init().await.unwrap();
+            let mut kafka_client = Rc::new(RefCell::new(
+                KafkaClient::default()
+                    .with_metadata(
+                        Metadata::default().with_refresh_frequency(Duration::from_secs(10)),
+                    )
+                    .with_producer(Producer::default())
+                    .with_hosts(vec!["localhost:9092".to_string()]),
+            ));
+            kafka_client.borrow_mut().init().await.unwrap();
             // kafka_client.request_metadata().await;
-            kafka_client.request_produce().await;
-            kafka_client.produce_record().await;
+            let messages = vec![
+                (
+                    "tmp".to_string(),
+                    Some("0".to_string()),
+                    Some("b".to_string()),
+                ),
+                ("tmp".to_string(), None, Some("1".to_string())),
+                ("tmp".to_string(), Some("2".to_string()), None),
+                (
+                    "test".to_string(),
+                    Some("0".to_string()),
+                    Some("b".to_string()),
+                ),
+                ("test".to_string(), None, Some("1".to_string())),
+                ("test".to_string(), Some("2".to_string()), None),
+            ];
+            stream::iter(messages.into_iter())
+                .for_each(|(topic, key, value)| {
+                    spawn_local(enclose!((kafka_client => kafka_client) async move {
+                        let res = kafka_client.borrow().produce_record(topic.clone(), key.clone(), value.clone()).await;
+                        println!("{:?} => {:?}", (topic, key, value), res);
+                    }))
+                    .detach();
+                })
+                .await;
+            Timer::new(Duration::from_secs(3)).await;
+            // kafka_client.handle_records_queue().await;
             // let mut b = Bytes::new();
             // b.try_get_bytes(size)
             // let stream = TcpStream::connect("localhost:12345").await.unwrap();

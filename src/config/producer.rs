@@ -1,11 +1,14 @@
 use std::time::Duration;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Producer {
     /// The level of acknowledgement reliability needed from the broker (defaults
     /// to All). Equivalent to the [`acks`](https://kafka.apache.org/documentation/#producerconfigs_acks) setting of the
     /// Producer Configs.
     pub required_acks: RequiredAcks,
+
+    // pub compression: 
+
     /// The maximum duration the broker will wait the receipt of the number
     /// RequiredAcks (defaults to 10 seconds). This is only relevant when
     /// RequiredAcks is set to WaitForAll or a number > 1. Only supports
@@ -61,7 +64,7 @@ impl Default for Producer {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Flush {
     /// The best-effort number of messages needed to trigger a flush.
     ///
@@ -88,7 +91,7 @@ impl Default for Flush {
     fn default() -> Self {
         Self {
             messages: 100,
-            frequency: Duration::from_millis(5),
+            frequency: Duration::from_millis(2000),
         }
     }
 }
