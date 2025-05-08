@@ -13,8 +13,8 @@ use futures_lite::{
     stream,
 };
 use glommio::{
-    LocalExecutorBuilder, enclose,
-    spawn_local,
+    LocalExecutorBuilder, enclose, spawn_local,
+    sync::{Gate, Semaphore},
     timer::Timer,
 };
 use kafka_client::{
@@ -25,6 +25,24 @@ use kafka_client::{
 fn main() {
     LocalExecutorBuilder::default()
         .spawn(|| async move {
+            // let mut gate = Gate::new();
+            // gate.spawn(async move {
+            //     println!("before timer");
+            //     Timer::new(Duration::from_secs(1)).await;
+            //     println!("after timer");
+            // }).unwrap().detach();
+            // spawn_local(enclose!((gate) async move {
+            //     let pass = gate.enter().unwrap();
+            //     println!("after enter");
+            //     Timer::new(Duration::from_secs(2)).await;
+            //     // drop(pass);
+            //     println!("pass dropped");
+            // })).detach();
+            // println!("{}", gate.is_open());
+            // gate.close().await.unwrap();
+            // println!("after gate close");
+            // println!("{}", gate.is_open());
+            // return ;
             // let (s, r) = local_channel::new_bounded(1);
             // let timer = TimerActionOnce::do_in(Duration::from_secs(1), async move {
             //     println!("timer");
@@ -84,7 +102,7 @@ fn main() {
             kafka_client.borrow_mut().init().await.unwrap();
             println!("{:?}", kafka_client.borrow().get_brokers_ref());
             // kafka_client.request_metadata().await;
-            let mut messages = vec![
+            let messages = vec![
                 (
                     "tmp".to_string(),
                     Some("0".to_string()),
@@ -100,19 +118,22 @@ fn main() {
                 ("test".to_string(), None, Some("1".to_string())),
                 ("test".to_string(), Some("2".to_string()), None),
             ];
-            for _ in 0..3 {
-                messages.extend_from_within(0..messages.len());
-            }
+            // for _ in 0..3 {
+            //     messages.extend_from_within(0..messages.len());
+            // }
+            let gate = Gate::new();
             stream::iter(messages.into_iter())
                 .for_each(|(topic, key, value)| {
-                    spawn_local(enclose!((kafka_client => kafka_client) async move {
+                    spawn_local(enclose!((kafka_client => kafka_client, gate) async move {
+                        let _pass = gate.enter();
                         let res = kafka_client.borrow().produce_record(topic.clone(), key.clone(), value.clone()).await;
                         println!("{:?} => {:?}", (topic, key, value), res);
                     }))
                     .detach();
                 })
                 .await;
-            Timer::new(Duration::from_secs(3)).await;
+            // Timer::new(Duration::from_secs(3)).await;
+            gate.close().await.unwrap();
             // kafka_client.handle_records_queue().await;
             // let mut b = Bytes::new();
             // b.try_get_bytes(size)
