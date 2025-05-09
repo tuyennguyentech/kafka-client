@@ -53,6 +53,7 @@ struct State {
 
 static TIMEOUT: Duration = Duration::from_secs(5);
 
+#[allow(unused)]
 impl KafkaClient {
     fn get_produce_event_loop_ref(&self) -> Ref<'_, Option<TimerActionOnce<()>>> {
         self.produce_event_loop.borrow()
